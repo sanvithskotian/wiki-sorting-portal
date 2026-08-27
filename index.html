@@ -173,7 +173,6 @@
         <div class="roster-list" id="rosterList"></div>
       </div>
       <button class="btn ghost" id="againBtn">Sort the Next Participant</button>
-      <p id="pendingBadge" style="font-size:.75rem; color:var(--parchment-dim); margin-top:10px;"></p>
     </div>
 
   </div>
@@ -203,7 +202,7 @@
     </div>
 
     <div class="tiles" id="tiles"></div>
-    <p style="font-size:.85rem; color:var(--parchment-dim); margin:-10px 0 20px;">Total sorted: <b id="totalCount" style="color:var(--gold-bright);">0</b> · Round <span id="roundNum">1</span> <span id="adminPendingBadge" style="color:#e8c968;"></span></p>
+    <p style="font-size:.85rem; color:var(--parchment-dim); margin:-10px 0 20px;">Total sorted: <b id="totalCount" style="color:var(--gold-bright);">0</b> · Round <span id="roundNum">1</span> </p>
 
     <div class="toolbar">
       <input type="text" id="searchInput" placeholder="Search name or USN…">
@@ -244,14 +243,13 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebas
 import {
   getFirestore,
   collection,
-  addDoc,
   getDocs,
-  query,
-  where,
   doc,
   getDoc,
   setDoc,
-  deleteDoc
+  deleteDoc,
+  runTransaction,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -292,148 +290,221 @@ const HOUSES = {
 };
 const ORDER = ["gryffindor","slytherin","ravenclaw","hufflepuff"];
 
-/* ================= STATE ================= */
+/* ================= FIREBASE STATE ================= */
+
 let round = 1;
-let counts = {gryffindor:0, slytherin:0, ravenclaw:0, hufflepuff:0};
-let sortsSinceSync = 999; // forces a real sync on first load
-const SYNC_EVERY = 6; // re-read real counts from storage every N sorts on this device
 
-// Entries that couldn't be saved yet (e.g. a transient rate limit) sit here
-// and a background loop keeps quietly retrying them, so a participant is
-// never blocked or lost — this device just syncs them a little late.
-let pendingQueue = [];
-let flushing = false;
-async function flushPending(){
-  if(flushing || !pendingQueue.length) return;
-  flushing = true;
-  const item = pendingQueue[0];
-  try{
-    const key = makeKey(item.house, item.round);
-    const res = await window.storage.set(key, JSON.stringify({name:item.name, usn:item.usn, t:item.t}), true);
-    if(res){
-      pendingQueue.shift();
-      updatePendingBadge();
+let counts = {
+  gryffindor: 0,
+  slytherin: 0,
+  ravenclaw: 0,
+  hufflepuff: 0
+};
+
+let adminData = {};
+
+/* ================= FIRESTORE HELPERS ================= */
+
+function getSettingsRef() {
+  return doc(db, "settings", "current");
+}
+
+function getRoundRef(roundNumber = round) {
+  return doc(db, "rounds", `round_${roundNumber}`);
+}
+
+function getCountsRef(roundNumber = round) {
+  return doc(
+    db,
+    "rounds",
+    `round_${roundNumber}`,
+    "data",
+    "counts"
+  );
+}
+
+function getParticipantsRef(roundNumber = round) {
+  return collection(
+    db,
+    "rounds",
+    `round_${roundNumber}`,
+    "participants"
+  );
+}
+
+/* ================= LOAD CURRENT ROUND ================= */
+
+async function loadRound() {
+  try {
+    const settingsSnap = await getDoc(getSettingsRef());
+
+    if (settingsSnap.exists()) {
+      round = settingsSnap.data().round || 1;
+    } else {
+      round = 1;
+
+      await setDoc(getSettingsRef(), {
+        round: 1
+      });
     }
-  }catch(e){ /* still pending, will retry on the next tick */ }
-  flushing = false;
-}
-setInterval(flushPending, 4000);
 
-function updatePendingBadge(){
-  const el = document.getElementById('pendingBadge');
-  if(el) el.textContent = pendingQueue.length ? `⏳ ${pendingQueue.length} entr${pendingQueue.length===1?'y':'ies'} syncing from this device…` : '';
-  const adminEl = document.getElementById('adminPendingBadge');
-  if(adminEl) adminEl.textContent = pendingQueue.length ? `· ⏳ ${pendingQueue.length} pending sync on this device` : '';
+    document.getElementById("roundNum").textContent = round;
+
+  } catch (error) {
+    console.error("Error loading round:", error);
+    round = 1;
+  }
 }
 
-/* ================= UTIL ================= */
-// Spaces out every storage call by a small minimum gap so a burst of
-// several calls (e.g. a 4-house resync) never fires all at once.
-let _lastCallAt = 0;
-async function pace(minGapMs){
-  minGapMs = minGapMs !== undefined ? minGapMs : 130;
-  const wait = _lastCallAt + minGapMs - Date.now();
-  if(wait > 0) await new Promise(r=>setTimeout(r, wait));
-  _lastCallAt = Date.now();
+/* ================= LOAD COUNTS ================= */
+
+async function refreshCounts() {
+  try {
+    const countsSnap = await getDoc(getCountsRef());
+
+    if (countsSnap.exists()) {
+      const data = countsSnap.data();
+
+      ORDER.forEach(house => {
+        counts[house] = data[house] || 0;
+      });
+
+    } else {
+
+      counts = {
+        gryffindor: 0,
+        slytherin: 0,
+        ravenclaw: 0,
+        hufflepuff: 0
+      };
+
+      await setDoc(getCountsRef(), counts);
+    }
+
+    return counts;
+
+  } catch (error) {
+    console.error("Error loading counts:", error);
+    return counts;
+  }
 }
 
-function isRateLimitError(e){
-  return e && String(e.message||e).toLowerCase().includes('rate limit');
-}
+/* ================= CHOOSE HOUSE ================= */
 
-// Retries a storage call with backoff — smooths over transient errors
-// (including rate limits) instead of failing the user's action outright.
-// Rate-limit errors get a longer backoff since they need real time to clear.
-async function withRetry(fn, retries, baseDelay){
-  retries = retries || 3; baseDelay = baseDelay || 400;
-  let lastErr;
-  for(let i=0; i<retries; i++){
-    await pace();
-    try{ return await fn(); }
-    catch(e){
-      lastErr = e;
-      if(i < retries-1){
-        const delay = isRateLimitError(e) ? baseDelay*(i+2)*2 : baseDelay*(i+1);
-        await new Promise(r=>setTimeout(r, delay));
-      }
+function pickHouse(c) {
+  const max = Math.max(...ORDER.map(h => c[h] || 0));
+
+  const weights = ORDER.map(
+    h => (max - (c[h] || 0)) + 1
+  );
+
+  const total = weights.reduce((a, b) => a + b, 0);
+
+  let random = Math.random() * total;
+
+  for (let i = 0; i < ORDER.length; i++) {
+    random -= weights[i];
+
+    if (random <= 0) {
+      return ORDER[i];
     }
   }
-  throw lastErr;
+
+  return ORDER[ORDER.length - 1];
 }
 
-// Keys never contain the participant's name/USN (that data lives only in the
-// stored value) — keeps keys short, ASCII-safe, and immune to special
-// characters in a name causing a malformed request.
-function keyPrefix(house, r){ return `sort:r${r!==undefined?r:round}:${house}:`; }
-function makeKey(house, r){
-  const ts = Date.now().toString(36);
-  const rnd = Math.random().toString(36).slice(2,8);
-  return `${keyPrefix(house, r)}${ts}-${rnd}`;
+/* ================= SAFE FIREBASE SORTING ================= */
+
+async function assignHouse(name, usn) {
+
+  const result = await runTransaction(db, async (transaction) => {
+
+    const countsRef = getCountsRef();
+
+    const countsSnap = await transaction.get(countsRef);
+
+    let currentCounts = {
+      gryffindor: 0,
+      slytherin: 0,
+      ravenclaw: 0,
+      hufflepuff: 0
+    };
+
+    if (countsSnap.exists()) {
+      const data = countsSnap.data();
+
+      ORDER.forEach(house => {
+        currentCounts[house] = data[house] || 0;
+      });
+    }
+
+    /* Choose the house using the REAL latest counts */
+    const chosenHouse = pickHouse(currentCounts);
+
+    /* Update the count */
+    currentCounts[chosenHouse]++;
+
+    transaction.set(
+      countsRef,
+      currentCounts
+    );
+
+    /* Create participant document */
+    const participantRef = doc(
+      getParticipantsRef(),
+      `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    );
+
+    transaction.set(participantRef, {
+      name: name,
+      usn: usn,
+      house: chosenHouse,
+      timestamp: serverTimestamp()
+    });
+
+    return {
+      house: chosenHouse,
+      counts: currentCounts
+    };
+  });
+
+  counts = result.counts;
+
+  return result.house;
 }
 
-async function loadRound(){
-  try{
-    const r = await withRetry(()=>window.storage.get('current-round', true));
-    if(r && r.value) round = parseInt(r.value, 10) || 1;
-  }catch(e){ round = 1; }
-  document.getElementById('roundNum').textContent = round;
-}
+/* ================= LOAD PARTICIPANTS ================= */
 
-async function fetchHouseKeys(house, r){
-  try{
-    const res = await withRetry(()=>window.storage.list(keyPrefix(house, r), true));
-    return (res && res.keys) ? res.keys : [];
-  }catch(e){ return []; }
-}
+async function loadParticipants(roundNumber = round) {
 
-async function refreshCounts(){
-  const results = await Promise.all(ORDER.map(h => fetchHouseKeys(h)));
-  ORDER.forEach((h,i)=>{ counts[h] = results[i].length; });
-  sortsSinceSync = 0;
-  return counts;
-}
+  const participantsRef = getParticipantsRef(roundNumber);
 
-// Fetch stored values for a list of keys, in small, gently-paced batches so
-// we never trigger a storage rate limit even with a large roster.
-async function batchGetValues(keys, batchSize, pauseMs){
-  batchSize = batchSize || 10;
-  pauseMs = pauseMs !== undefined ? pauseMs : 150;
-  const out = [];
-  for(let i=0; i<keys.length; i+=batchSize){
-    const slice = keys.slice(i, i+batchSize);
-    const results = await Promise.all(slice.map(async k=>{
-      try{
-        const res = await withRetry(()=>window.storage.get(k, true), 2, 300);
-        return res && res.value ? JSON.parse(res.value) : null;
-      }catch(e){ return null; }
-    }));
-    results.forEach(r=>{ if(r) out.push(r); });
-    if(i+batchSize < keys.length && pauseMs) await new Promise(r=>setTimeout(r, pauseMs));
-  }
-  return out;
-}
+  const snapshot = await getDocs(participantsRef);
 
-// Delete a batch of keys (used to actually clear a round's data, not just
-// hide it). Best-effort — failures on individual keys are ignored.
-async function batchDeleteKeys(keys, batchSize, pauseMs){
-  batchSize = batchSize || 10;
-  pauseMs = pauseMs !== undefined ? pauseMs : 150;
-  for(let i=0; i<keys.length; i+=batchSize){
-    const slice = keys.slice(i, i+batchSize);
-    await Promise.all(slice.map(async k=>{
-      try{ await withRetry(()=>window.storage.delete(k, true), 2, 300); }catch(e){ /* ignore */ }
-    }));
-    if(i+batchSize < keys.length && pauseMs) await new Promise(r=>setTimeout(r, pauseMs));
-  }
-}
+  const data = {
+    gryffindor: [],
+    slytherin: [],
+    ravenclaw: [],
+    hufflepuff: []
+  };
 
-function pickHouse(c){
-  const max = Math.max(...ORDER.map(h=>c[h]||0));
-  const weights = ORDER.map(h => (max - (c[h]||0)) + 1);
-  const total = weights.reduce((a,b)=>a+b,0);
-  let r = Math.random()*total;
-  for(let i=0;i<ORDER.length;i++){ r -= weights[i]; if(r<=0) return ORDER[i]; }
-  return ORDER[ORDER.length-1];
+  snapshot.forEach(document => {
+
+    const participant = document.data();
+
+    if (participant.house && data[participant.house]) {
+      data[participant.house].push({
+        id: document.id,
+        name: participant.name || "",
+        usn: participant.usn || "",
+        house: participant.house,
+        timestamp: participant.timestamp
+      });
+    }
+
+  });
+
+  return data;
 }
 
 /* ================= STARFIELD ================= */
@@ -463,10 +534,19 @@ function checkFormValid(){
 nameInput.addEventListener('input', checkFormValid);
 usnInput.addEventListener('input', checkFormValid);
 
-async function refreshTotalNote(force){
-  if(force || sortsSinceSync >= SYNC_EVERY) await refreshCounts();
-  const total = ORDER.reduce((a,h)=>a+counts[h],0);
-  totalNote.textContent = total > 0 ? `${total} wizards have joined the journey so far` : `Be among the first to be sorted`;
+async function refreshTotalNote() {
+
+  await refreshCounts();
+
+  const total = ORDER.reduce(
+    (total, house) => total + counts[house],
+    0
+  );
+
+  totalNote.textContent =
+    total > 0
+      ? `${total} wizards have joined the journey so far`
+      : `Be among the first to be sorted`;
 }
 
 function applyHouseTheme(h){
@@ -491,85 +571,144 @@ function launchConfetti(house){
   setTimeout(()=>{ box.innerHTML=''; }, 4200);
 }
 
-sortBtn.addEventListener('click', async ()=>{
-  sortBtn.disabled = true;
-  nameInput.blur(); usnInput.blur();
-  mainHead.style.opacity='.4';
-  hatWrap.classList.add('thinking');
-  ticker.classList.add('show'); flavor.classList.add('show');
-
-  // Full resync only every few sorts on this device — most sorts reuse the
-  // in-memory counts (updated locally after each save) so a busy entrance
-  // table doesn't hammer storage with 4 list calls per single participant.
-  if(sortsSinceSync >= SYNC_EVERY) await refreshCounts();
-  const chosen = pickHouse(counts);
-
-  let step = 0;
-  const totalSteps = 16;
-  const sequence = [];
-  for(let i=0;i<totalSteps;i++) sequence.push(ORDER[Math.floor(Math.random()*ORDER.length)]);
-  sequence.push(chosen);
-
-  function tick(){
-    const h = sequence[step];
-    ticker.textContent = HOUSES[h].name;
-    ticker.style.color = HOUSES[h].a;
-    flavor.textContent = HOUSES[h].flavor;
-    step++;
-    if(step < sequence.length){
-      const delay = 70 + Math.pow(step/totalSteps, 2.2)*280;
-      setTimeout(tick, delay);
-    } else {
-      finishSort(chosen);
-    }
-  }
-  tick();
-});
-
-async function finishSort(h){
-  hatWrap.classList.remove('thinking');
-  ticker.classList.remove('show'); flavor.classList.remove('show');
-  const house = HOUSES[h];
-  applyHouseTheme(h);
-  document.body.classList.add('revealed');
+sortBtn.addEventListener("click", async () => {
 
   const name = nameInput.value.trim();
   const usn = usnInput.value.trim();
 
-  document.getElementById('crestSvg').innerHTML = house.crest;
-  document.getElementById('houseName').textContent = house.name;
-  document.getElementById('houseTag').textContent = house.tag;
-  document.getElementById('greet').innerHTML = `<b>${escapeHtml(name)}</b>, the Hat has decided — welcome to <b>${house.name}</b>. Your journey begins now.`;
+  if (!name || !usn) return;
 
-  entry.style.display='none';
-  mainHead.style.display='none';
-  reveal.classList.add('show');
+  sortBtn.disabled = true;
+
+  nameInput.blur();
+  usnInput.blur();
+
+  mainHead.style.opacity = ".4";
+
+  hatWrap.classList.add("thinking");
+
+  ticker.classList.add("show");
+  flavor.classList.add("show");
+
+  /* Animation sequence */
+  let step = 0;
+  const totalSteps = 16;
+
+  const sequence = [];
+
+  for (let i = 0; i < totalSteps; i++) {
+    sequence.push(
+      ORDER[Math.floor(Math.random() * ORDER.length)]
+    );
+  }
+
+  /*
+    IMPORTANT:
+    We first ask Firebase to safely assign the real house.
+    The transaction handles multiple people clicking together.
+  */
+
+  let chosenHouse;
+
+  try {
+
+    chosenHouse = await assignHouse(name, usn);
+
+  } catch (error) {
+
+    console.error("Sorting error:", error);
+
+    hatWrap.classList.remove("thinking");
+    ticker.classList.remove("show");
+    flavor.classList.remove("show");
+
+    mainHead.style.opacity = "1";
+
+    alert("Unable to connect to the sorting system. Please try again.");
+
+    checkFormValid();
+
+    return;
+  }
+
+  sequence.push(chosenHouse);
+
+  function tick() {
+
+    const house = sequence[step];
+
+    ticker.textContent = HOUSES[house].name;
+
+    ticker.style.color = HOUSES[house].a;
+
+    flavor.textContent = HOUSES[house].flavor;
+
+    step++;
+
+    if (step < sequence.length) {
+
+      const delay =
+        70 + Math.pow(step / totalSteps, 2.2) * 280;
+
+      setTimeout(tick, delay);
+
+    } else {
+
+      finishSort(chosenHouse);
+    }
+  }
+
+  tick();
+});
+
+async function finishSort(h) {
+
+  hatWrap.classList.remove("thinking");
+
+  ticker.classList.remove("show");
+  flavor.classList.remove("show");
+
+  const house = HOUSES[h];
+
+  applyHouseTheme(h);
+
+  document.body.classList.add("revealed");
+
+  const name = nameInput.value.trim();
+
+  document.getElementById("crestSvg").innerHTML =
+    house.crest;
+
+  document.getElementById("houseName").textContent =
+    house.name;
+
+  document.getElementById("houseTag").textContent =
+    house.tag;
+
+  document.getElementById("greet").innerHTML =
+    `<b>${escapeHtml(name)}</b>, the Hat has decided — welcome to <b>${house.name}</b>. Your journey begins now.`;
+
+  entry.style.display = "none";
+
+  mainHead.style.display = "none";
+
+  reveal.classList.add("show");
+
   launchConfetti(house);
 
-  // The result is decided — reflect it immediately regardless of network
-  // timing, and queue the save so it never blocks or gets lost.
-  counts[h] = (counts[h]||0) + 1;
-  sortsSinceSync++;
   renderHousemates(h);
-
-  let saved = false;
-  try{
-    const key = makeKey(h);
-    const res = await withRetry(()=>window.storage.set(key, JSON.stringify({name, usn, t:Date.now()}), true), 2, 500);
-    if(res) saved = true;
-  }catch(e){ console.error('save error', e); }
-
-  if(!saved){
-    pendingQueue.push({house:h, name, usn, t:Date.now(), round});
-    updatePendingBadge();
-    flushPending();
-  }
 }
 
-function renderHousemates(h){
-  document.getElementById('rosterTitle').textContent = 'Your house so far';
-  const list = document.getElementById('rosterList');
-  list.innerHTML = `<span>${HOUSES[h].name} now has <b>${counts[h]}</b> member${counts[h]===1?'':'s'}.</span>`;
+function renderHousemates(h) {
+
+  document.getElementById("rosterTitle").textContent =
+    "Your house so far";
+
+  const list =
+    document.getElementById("rosterList");
+
+  list.innerHTML =
+    `<span>${HOUSES[h].name} now has <b>${counts[h]}</b> member${counts[h] === 1 ? "" : "s"}.</span>`;
 }
 
 document.getElementById('againBtn').addEventListener('click', ()=>{
@@ -609,18 +748,35 @@ function checkPin(){
 }
 
 /* ================= ADMIN ================= */
-let adminData = {};
 
 async function loadAdmin(){
-  await loadRound();
-  updatePendingBadge();
-  const keyLists = await Promise.all(ORDER.map(h => fetchHouseKeys(h)));
-  ORDER.forEach((h,i)=>{ counts[h] = keyLists[i].length; });
-  renderTiles();
-  document.getElementById('tables').innerHTML = '<p style="opacity:.6; font-size:.85rem;">Loading roster…</p>';
-  const rosterLists = await Promise.all(keyLists.map(keys => batchGetValues(keys)));
-  ORDER.forEach((h,i)=>{ adminData[h] = rosterLists[i]; });
-  renderTables();
+
+  try {
+
+    await loadRound();
+
+    document.getElementById('tables').innerHTML =
+      '<p style="opacity:.6; font-size:.85rem;">Loading roster…</p>';
+
+    /* Get all participants from Firebase */
+    adminData = await loadParticipants(round);
+
+    /* Update counts based on Firebase data */
+    ORDER.forEach(house => {
+      counts[house] = adminData[house].length;
+    });
+
+    renderTiles();
+
+    renderTables();
+
+  } catch (error) {
+
+    console.error("Error loading admin data:", error);
+
+    document.getElementById('tables').innerHTML =
+      '<p style="color:#ff8f8f;">Unable to load roster. Please refresh.</p>';
+  }
 }
 
 function renderTiles(){
@@ -679,23 +835,53 @@ document.getElementById('resetBtn').addEventListener('click', ()=>{
 document.getElementById('cancelReset').addEventListener('click', ()=>{
   document.getElementById('resetModal').classList.remove('show');
 });
-document.getElementById('confirmReset').addEventListener('click', async ()=>{
-  const oldRound = round;
-  round += 1;
-  try{ await window.storage.set('current-round', String(round), true); }catch(e){ console.error(e); }
-  document.getElementById('resetModal').classList.remove('show');
+document.getElementById('confirmReset').addEventListener('click', async () => {
 
-  // instantly reset what admin sees — new round has no entries yet
-  ORDER.forEach(h=>{ counts[h]=0; adminData[h]=[]; });
-  renderTiles(); renderTables();
-  document.getElementById('tables').insertAdjacentHTML('afterbegin',
-    '<p id="cleanupNote" style="opacity:.6; font-size:.8rem; grid-column:1/-1;">Clearing previous round\'s data in the background…</p>');
+  try {
 
-  // actually delete the old round's entries so they don't linger in storage
-  const oldKeyLists = await Promise.all(ORDER.map(h => fetchHouseKeys(h, oldRound)));
-  await Promise.all(oldKeyLists.map(keys => batchDeleteKeys(keys)));
-  const note = document.getElementById('cleanupNote');
-  if(note) note.remove();
+    /* Move to the next round */
+    round += 1;
+
+    /* Save the new round number in Firebase */
+    await setDoc(getSettingsRef(), {
+      round: round
+    });
+
+    /* Create fresh counts for the new round */
+    counts = {
+      gryffindor: 0,
+      slytherin: 0,
+      ravenclaw: 0,
+      hufflepuff: 0
+    };
+
+    await setDoc(getCountsRef(), counts);
+
+    /* Clear admin data */
+    adminData = {
+      gryffindor: [],
+      slytherin: [],
+      ravenclaw: [],
+      hufflepuff: []
+    };
+
+    document.getElementById('resetModal').classList.remove('show');
+
+    renderTiles();
+
+    renderTables();
+
+    document.getElementById('roundNum').textContent = round;
+
+    alert("New round started successfully!");
+
+  } catch (error) {
+
+    console.error("Error starting new round:", error);
+
+    alert("Unable to start a new round. Please try again.");
+  }
+
 });
 
 /* ---- QR generator ---- */
