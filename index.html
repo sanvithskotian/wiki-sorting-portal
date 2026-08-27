@@ -237,7 +237,34 @@
 
 <a href="#" class="admin-link" id="adminLink">admin</a>
 
-<script>
+<script type="module">
+  
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  where,
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc
+} from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDCX9nGtX-oQ_oJiB-UYX90yf4jHmoJXzE",
+  authDomain: "wiki-sorting-portal.firebaseapp.com",
+  projectId: "wiki-sorting-portal",
+  storageBucket: "wiki-sorting-portal.firebasestorage.app",
+  messagingSenderId: "398885820827",
+  appId: "1:398885820827:web:089a05bf602fcb79a1a93e"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 /* ================= CONFIG ================= */
 const ADMIN_PIN = "0905";           // change this before the event
 const CAPACITY_NOTE_THRESHOLD = 200; // just for messaging, not a hard cap
