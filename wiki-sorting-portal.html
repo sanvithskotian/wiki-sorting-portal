@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Wiki Sorting Portal — Open Source Day</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;600&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --night-1:#080a14; --night-2:#10152b;
+    --parchment:#efe4c9; --parchment-dim:#cdbd93; --gold:#c9a227; --gold-bright:#e8c968;
+
+    --gryf-1:#740001; --gryf-2:#ae0001; --gryf-a:#d3a625;
+    --slyt-1:#0d2818; --slyt-2:#1a472a; --slyt-a:#aaaaaa;
+    --rave-1:#0c1533; --rave-2:#222f5b; --rave-a:#946b2d;
+    --huff-1:#5c4a10; --huff-2:#ecb939; --huff-a:#372e29;
+
+    --house-1:var(--night-2); --house-2:var(--night-2); --house-a:var(--gold);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0; min-height:100vh;
+    background:
+      radial-gradient(ellipse at 20% 10%, rgba(201,162,39,0.10), transparent 45%),
+      radial-gradient(ellipse at 80% 85%, rgba(90,40,150,0.14), transparent 50%),
+      linear-gradient(180deg, var(--night-1), var(--night-2) 60%, var(--night-1));
+    color:var(--parchment); font-family:'EB Garamond', serif;
+    overflow-x:hidden; position:relative; transition:background 900ms ease;
+  }
+  body.revealed{
+    background:
+      radial-gradient(ellipse at 50% -10%, color-mix(in srgb, var(--house-2) 55%, transparent), transparent 60%),
+      linear-gradient(180deg, var(--night-1), var(--night-2) 55%, var(--night-1));
+  }
+  .stars{position:fixed; inset:0; pointer-events:none; z-index:0;}
+  .stars span{position:absolute; width:2px; height:2px; background:var(--gold-bright); border-radius:50%; opacity:.2; animation:twinkle 3.5s ease-in-out infinite;}
+  @keyframes twinkle{0%,100%{opacity:.1;} 50%{opacity:.65;}}
+  .confetti{ position:fixed; inset:0; pointer-events:none; z-index:5; overflow:hidden; }
+  .confetti i{ position:absolute; top:-20px; width:8px; height:14px; opacity:.9; animation:fall linear forwards; }
+  @keyframes fall{ to{ transform:translateY(110vh) rotate(540deg); opacity:.2; } }
+
+  .view{ display:none; position:relative; z-index:1; min-height:100vh; }
+  .view.active{ display:flex; }
+
+  /* ---------- Landing & sorting share a stage layout ---------- */
+  .stage{ max-width:520px; margin:0 auto; width:100%; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:30px 20px 26px; text-align:center; }
+  .eyebrow{ font-family:'Cinzel', serif; letter-spacing:.3em; text-transform:uppercase; font-size:.66rem; color:var(--gold); opacity:.85; margin:4px 0 6px; }
+  h1{ font-family:'Cinzel Decorative', serif; font-weight:900; font-size:1.85rem; line-height:1.18; margin:0 0 6px; text-shadow:0 0 18px rgba(201,162,39,0.25); }
+  .sub{ color:var(--parchment-dim); font-size:.98rem; margin:0 0 22px; max-width:380px; }
+
+  .hat-wrap{ width:170px; height:170px; margin:6px 0 20px; display:flex; align-items:center; justify-content:center; position:relative; }
+  .hat-wrap svg{ width:100%; height:100%; filter:drop-shadow(0 12px 20px rgba(0,0,0,.55)); }
+  .hat-wrap.thinking svg{ animation:hat-shake .42s ease-in-out infinite; }
+  @keyframes hat-shake{ 0%,100%{transform:rotate(0) translateY(0);} 20%{transform:rotate(-4deg) translateY(-2px);} 50%{transform:rotate(3deg);} 80%{transform:rotate(-2deg) translateY(-1px);} }
+  .glow-ring{ position:absolute; inset:6px; border-radius:50%; background:radial-gradient(circle, rgba(201,162,39,.35), transparent 70%); opacity:0; transition:opacity .5s; }
+  .hat-wrap.thinking .glow-ring{ opacity:1; animation:pulse .9s ease-in-out infinite; }
+  @keyframes pulse{0%,100%{transform:scale(.9);} 50%{transform:scale(1.08);}}
+
+  input[type=text]{ width:100%; max-width:320px; background:rgba(239,228,201,0.06); border:1px solid rgba(201,162,39,0.35); color:var(--parchment); font-family:'EB Garamond', serif; font-size:1.02rem; padding:12px 16px; border-radius:8px; text-align:center; margin-bottom:13px; outline:none; }
+  input[type=text]::placeholder{ color:rgba(239,228,201,0.42); }
+  input[type=text]:focus{ border-color:var(--gold-bright); box-shadow:0 0 0 3px rgba(201,162,39,0.15); }
+
+  .btn{ font-family:'Cinzel', serif; font-weight:600; letter-spacing:.1em; text-transform:uppercase; font-size:.92rem; background:linear-gradient(180deg, var(--gold-bright), var(--gold)); color:#1c1608; border:none; border-radius:999px; padding:15px 34px; cursor:pointer; box-shadow:0 8px 24px rgba(201,162,39,.28), inset 0 1px 0 rgba(255,255,255,.4); transition:transform .15s, opacity .3s; }
+  .btn:active{ transform:scale(.96); }
+  .btn:disabled{ opacity:.45; pointer-events:none; }
+  .btn.ghost{ background:transparent; border:1px solid rgba(239,228,201,.35); color:var(--parchment-dim); box-shadow:none; padding:10px 22px; font-size:.78rem; }
+
+  .ticker{ height:40px; display:flex; align-items:center; justify-content:center; font-family:'Cinzel Decorative', serif; font-weight:700; font-size:1.3rem; margin-bottom:8px; opacity:0; transition:opacity .3s; }
+  .ticker.show{ opacity:1; }
+  .flavor{ font-style:italic; color:var(--parchment-dim); font-size:.9rem; min-height:22px; margin-bottom:20px; opacity:0; transition:opacity .3s; }
+  .flavor.show{ opacity:1; }
+
+  .reveal{ display:none; flex-direction:column; align-items:center; animation:reveal-in .7s ease both; width:100%; }
+  .reveal.show{ display:flex; }
+  @keyframes reveal-in{ from{opacity:0; transform:translateY(14px) scale(.97);} to{opacity:1; transform:none;} }
+  .crest{ width:120px; height:120px; margin:4px 0 14px; filter:drop-shadow(0 10px 22px rgba(0,0,0,.5)); }
+  .house-name{ font-family:'Cinzel Decorative', serif; font-weight:900; font-size:2.2rem; background:linear-gradient(180deg, var(--house-a), color-mix(in srgb, var(--house-a) 60%, white 10%)); -webkit-background-clip:text; background-clip:text; color:transparent; margin:0 0 4px; }
+  .house-tag{ color:var(--parchment-dim); font-style:italic; margin:0 0 16px; font-size:1rem; }
+  .greet{ font-size:1rem; margin-bottom:20px; }
+  .greet b{ color:var(--house-a); }
+  .roster-box{ width:100%; max-width:340px; border:1px solid rgba(201,162,39,.25); border-radius:10px; padding:12px 14px; margin-bottom:22px; background:rgba(239,228,201,0.03); }
+  .roster-box .rt{ font-family:'Cinzel', serif; font-size:.68rem; letter-spacing:.15em; text-transform:uppercase; color:var(--parchment-dim); margin-bottom:8px; }
+  .roster-list{ max-height:150px; overflow-y:auto; text-align:left; font-size:.88rem; line-height:1.75; }
+  .roster-list span{ display:inline-block; margin-right:10px; opacity:.9; }
+  .total-note{ font-size:.78rem; color:rgba(239,228,201,.4); font-style:italic; margin-top:auto; padding-top:14px; }
+
+  /* ---------- Admin ---------- */
+  .admin-wrap{ max-width:920px; margin:0 auto; width:100%; padding:24px 16px 60px; }
+  .admin-head{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px; }
+  .admin-head h2{ font-family:'Cinzel', serif; font-size:1.15rem; letter-spacing:.05em; margin:0; }
+  .pin-box{ max-width:280px; margin:80px auto; text-align:center; }
+  .tiles{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:12px; margin-bottom:22px; }
+  .tile{ border-radius:12px; padding:16px; text-align:center; border:1px solid rgba(255,255,255,.08); }
+  .tile .n{ font-family:'Cinzel Decorative', serif; font-size:1.7rem; font-weight:900; }
+  .tile .l{ font-family:'Cinzel', serif; font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; opacity:.85; margin-top:2px; }
+  .toolbar{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; align-items:center; }
+  .toolbar input[type=text]{ margin:0; max-width:220px; text-align:left; padding:9px 12px; font-size:.92rem; }
+  .small-btn{ font-family:'Cinzel', serif; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; padding:9px 16px; border-radius:8px; border:1px solid rgba(201,162,39,.4); background:rgba(201,162,39,.08); color:var(--gold-bright); cursor:pointer; }
+  .small-btn.danger{ border-color:rgba(200,60,60,.5); color:#ff8f8f; background:rgba(200,60,60,.08); }
+  .tables{ display:grid; grid-template-columns:repeat(auto-fit, minmax(260px,1fr)); gap:16px; }
+  .htable{ border:1px solid rgba(255,255,255,.08); border-radius:10px; overflow:hidden; }
+  .htable h3{ margin:0; padding:10px 14px; font-family:'Cinzel', serif; font-size:.82rem; letter-spacing:.06em; }
+  .htable table{ width:100%; border-collapse:collapse; font-size:.82rem; }
+  .htable th,.htable td{ padding:6px 10px; text-align:left; border-top:1px solid rgba(255,255,255,.06); }
+  .htable td.usn{ color:var(--parchment-dim); font-variant-numeric:tabular-nums; }
+  .htable tbody{ display:block; max-height:260px; overflow-y:auto; }
+  .htable thead, .htable tbody tr{ display:table; width:100%; table-layout:fixed; }
+  .qr-panel{ margin-top:26px; padding:16px; border:1px solid rgba(201,162,39,.25); border-radius:10px; }
+  .qr-panel h3{ font-family:'Cinzel', serif; font-size:.85rem; letter-spacing:.06em; margin:0 0 10px; }
+  #qrcode{ background:#fff; padding:10px; border-radius:8px; display:inline-block; margin-top:10px; }
+  .hint{ font-size:.78rem; color:var(--parchment-dim); margin-top:8px; line-height:1.5; }
+  .modal-back{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:20; }
+  .modal-back.show{ display:flex; }
+  .modal{ background:#151a30; border:1px solid rgba(201,162,39,.3); border-radius:12px; padding:24px; max-width:320px; text-align:center; }
+  .modal p{ font-size:.92rem; margin-bottom:18px; }
+  .modal-row{ display:flex; gap:10px; justify-content:center; }
+
+  .admin-link{ position:fixed; bottom:8px; right:10px; font-size:.68rem; color:rgba(239,228,201,.25); z-index:2; text-decoration:none; letter-spacing:.05em; font-family:'Cinzel', serif; }
+</style>
+</head>
+<body>
+
+<div class="stars" id="stars"></div>
+<div class="confetti" id="confetti"></div>
+
+<!-- ============ LANDING + SORTING + REVEAL ============ -->
+<div class="view active" id="view-main">
+  <div class="stage">
+
+    <div id="mainHead">
+      <div class="eyebrow">Wiki Tech Club · Open Source Day</div>
+      <h1 id="title">⚡ Welcome to the Wiki Tech Journey</h1>
+      <p class="sub" id="subtitle">Before your journey begins, the ancient magic of the Sorting Hat must decide which house you belong to.</p>
+    </div>
+
+    <div class="hat-wrap" id="hatWrap">
+      <div class="glow-ring"></div>
+      <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="100" cy="168" rx="78" ry="14" fill="#000" opacity="0.35"/>
+        <path d="M40 160 C40 150 55 148 65 148 L135 148 C145 148 160 150 160 160 C160 168 150 170 140 170 L60 170 C50 170 40 168 40 160 Z" fill="#3b2a1c"/>
+        <path d="M62 148 C60 100 70 60 92 34 C82 70 84 112 92 148 Z" fill="#4a3524"/>
+        <path d="M92 34 C112 30 128 46 132 66 C120 96 118 122 138 148 L96 148 C86 112 86 70 92 34 Z" fill="#5a4229"/>
+        <path d="M92 34 C97 26 110 24 118 30 C114 34 108 38 106 44 C100 42 95 38 92 34 Z" fill="#5a4229"/>
+        <path d="M64 122 C90 112 130 116 158 132" stroke="#c9a227" stroke-width="5" stroke-linecap="round" opacity="0.85"/>
+        <circle cx="145" cy="128" r="6" fill="#c9a227"/>
+        <path d="M88 92 C93 88 100 88 104 92" stroke="#1a140d" stroke-width="3" stroke-linecap="round"/>
+        <path d="M84 104 Q96 112 110 103" stroke="#1a140d" stroke-width="3" stroke-linecap="round" fill="none"/>
+      </svg>
+    </div>
+
+    <div class="ticker" id="ticker"></div>
+    <div class="flavor" id="flavor"></div>
+
+    <div id="entry">
+      <input type="text" id="nameInput" placeholder="Your name" maxlength="40">
+      <input type="text" id="usnInput" placeholder="Your USN" maxlength="20">
+      <br>
+      <button class="btn" id="sortBtn" disabled>Let the Magic Decide</button>
+      <p class="total-note" id="totalNote">Loading the journey so far…</p>
+    </div>
+
+    <div class="reveal" id="reveal">
+      <div class="eyebrow" style="margin-bottom:10px;">✨ You have been assigned to ✨</div>
+      <svg class="crest" id="crestSvg" viewBox="0 0 120 120"></svg>
+      <div class="house-name" id="houseName"></div>
+      <div class="house-tag" id="houseTag"></div>
+      <div class="greet" id="greet"></div>
+      <div class="roster-box">
+        <div class="rt" id="rosterTitle">Your housemates so far</div>
+        <div class="roster-list" id="rosterList"></div>
+      </div>
+      <button class="btn ghost" id="againBtn">Sort the Next Participant</button>
+      <p id="pendingBadge" style="font-size:.75rem; color:var(--parchment-dim); margin-top:10px;"></p>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ ADMIN PIN ============ -->
+<div class="view" id="view-pin">
+  <div class="stage">
+    <div class="pin-box">
+      <div class="eyebrow">Restricted</div>
+      <h1 style="font-size:1.4rem;">Admin Access</h1>
+      <input type="text" id="pinInput" placeholder="Enter PIN" maxlength="10" style="letter-spacing:.3em; text-align:center;">
+      <br>
+      <button class="btn" id="pinBtn">Enter</button>
+      <p id="pinError" style="color:#ff8f8f; font-size:.82rem; margin-top:10px; display:none;">Incorrect PIN.</p>
+      <p style="margin-top:22px;"><a href="#" id="backFromPin" style="color:var(--parchment-dim); font-size:.82rem;">← Back to Sorting Portal</a></p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ADMIN DASHBOARD ============ -->
+<div class="view" id="view-admin">
+  <div class="admin-wrap">
+    <div class="admin-head">
+      <h2>🗝️ Sorting Portal — Admin Dashboard</h2>
+      <a href="#" id="backFromAdmin" style="color:var(--parchment-dim); font-size:.82rem;">← Back to Sorting Portal</a>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+    <p style="font-size:.85rem; color:var(--parchment-dim); margin:-10px 0 20px;">Total sorted: <b id="totalCount" style="color:var(--gold-bright);">0</b> · Round <span id="roundNum">1</span> <span id="adminPendingBadge" style="color:#e8c968;"></span></p>
+
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search name or USN…">
+      <button class="small-btn" id="exportBtn">⬇ Export CSV</button>
+      <button class="small-btn" id="refreshBtn">↻ Refresh</button>
+      <button class="small-btn danger" id="resetBtn">⟲ New Round (reset all)</button>
+    </div>
+
+    <div class="tables" id="tables"></div>
+
+    <div class="qr-panel">
+      <h3>Event Link / QR</h3>
+      <input type="text" id="siteUrlInput" placeholder="Paste your deployed site link here" style="text-align:left; max-width:100%;">
+      <br>
+      <button class="small-btn" id="genQrBtn">Generate QR</button>
+      <div id="qrcode"></div>
+      <p class="hint">This page needs to be hosted somewhere (e.g. GitHub Pages or Netlify Drop) before it has a real link — paste that link above once it's live, and this QR will always point to it. The QR is generated on your device, nothing is uploaded anywhere.</p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-back" id="resetModal">
+  <div class="modal">
+    <p>Start a <b>new round</b>? This resets all house counts to 0. Past rosters are kept in storage but hidden from view.</p>
+    <div class="modal-row">
+      <button class="small-btn" id="cancelReset">Cancel</button>
+      <button class="small-btn danger" id="confirmReset">Yes, Reset</button>
+    </div>
+  </div>
+</div>
+
+<a href="#" class="admin-link" id="adminLink">admin</a>
+
+<script>
+/* ================= CONFIG ================= */
+const ADMIN_PIN = "0905";           // change this before the event
+const CAPACITY_NOTE_THRESHOLD = 200; // just for messaging, not a hard cap
+
+const HOUSES = {
+  gryffindor: { name:"Gryffindor", tag:"Where dwell the brave at heart", c1:"#740001", c2:"#ae0001", a:"#d3a625",
+    crest:`<circle cx="60" cy="60" r="56" fill="none" stroke="#d3a625" stroke-width="3"/>
+      <path d="M60 30 C50 30 42 38 42 50 C42 62 52 68 52 78 L45 78 C45 85 52 90 60 90 C68 90 75 85 75 78 L68 78 C68 68 78 62 78 50 C78 38 70 30 60 30 Z" fill="#d3a625"/>
+      <path d="M60 40 C55 40 51 44 51 50 C51 58 60 62 60 62 C60 62 69 58 69 50 C69 44 65 40 60 40 Z" fill="#740001"/>`,
+    flavor:"The Hat senses courage..." },
+  slytherin: { name:"Slytherin", tag:"Those of cunning and ambition", c1:"#0d2818", c2:"#1a472a", a:"#aaaaaa",
+    crest:`<circle cx="60" cy="60" r="56" fill="none" stroke="#aaaaaa" stroke-width="3"/>
+      <path d="M35 40 C45 55 45 65 35 82 C55 78 62 68 60 55 C68 68 70 80 60 90 C80 82 82 62 68 50 C78 48 84 40 82 32 C72 42 60 40 55 32 C52 42 40 40 35 40 Z" fill="#aaaaaa"/>`,
+    flavor:"The Hat senses ambition..." },
+  ravenclaw: { name:"Ravenclaw", tag:"Where those of wit and learning belong", c1:"#0c1533", c2:"#222f5b", a:"#946b2d",
+    crest:`<circle cx="60" cy="60" r="56" fill="none" stroke="#946b2d" stroke-width="3"/>
+      <path d="M60 34 L74 58 L96 60 L78 74 L84 96 L60 84 L36 96 L42 74 L24 60 L46 58 Z" fill="#946b2d"/>`,
+    flavor:"The Hat senses wisdom..." },
+  hufflepuff: { name:"Hufflepuff", tag:"Where they are just and loyal", c1:"#5c4a10", c2:"#ecb939", a:"#372e29",
+    crest:`<circle cx="60" cy="60" r="56" fill="none" stroke="#ecb939" stroke-width="3"/>
+      <ellipse cx="60" cy="60" rx="26" ry="20" fill="#ecb939"/>
+      <path d="M40 60 C40 50 48 44 60 44 C72 44 80 50 80 60" fill="none" stroke="#372e29" stroke-width="3"/>
+      <circle cx="50" cy="58" r="3" fill="#372e29"/><circle cx="70" cy="58" r="3" fill="#372e29"/>`,
+    flavor:"The Hat senses loyalty..." }
+};
+const ORDER = ["gryffindor","slytherin","ravenclaw","hufflepuff"];
+
+/* ================= STATE ================= */
+let round = 1;
+let counts = {gryffindor:0, slytherin:0, ravenclaw:0, hufflepuff:0};
+let sortsSinceSync = 999; // forces a real sync on first load
+const SYNC_EVERY = 6; // re-read real counts from storage every N sorts on this device
+
+// Entries that couldn't be saved yet (e.g. a transient rate limit) sit here
+// and a background loop keeps quietly retrying them, so a participant is
+// never blocked or lost — this device just syncs them a little late.
+let pendingQueue = [];
+let flushing = false;
+async function flushPending(){
+  if(flushing || !pendingQueue.length) return;
+  flushing = true;
+  const item = pendingQueue[0];
+  try{
+    const key = makeKey(item.house, item.round);
+    const res = await window.storage.set(key, JSON.stringify({name:item.name, usn:item.usn, t:item.t}), true);
+    if(res){
+      pendingQueue.shift();
+      updatePendingBadge();
+    }
+  }catch(e){ /* still pending, will retry on the next tick */ }
+  flushing = false;
+}
+setInterval(flushPending, 4000);
+
+function updatePendingBadge(){
+  const el = document.getElementById('pendingBadge');
+  if(el) el.textContent = pendingQueue.length ? `⏳ ${pendingQueue.length} entr${pendingQueue.length===1?'y':'ies'} syncing from this device…` : '';
+  const adminEl = document.getElementById('adminPendingBadge');
+  if(adminEl) adminEl.textContent = pendingQueue.length ? `· ⏳ ${pendingQueue.length} pending sync on this device` : '';
+}
+
+/* ================= UTIL ================= */
+// Spaces out every storage call by a small minimum gap so a burst of
+// several calls (e.g. a 4-house resync) never fires all at once.
+let _lastCallAt = 0;
+async function pace(minGapMs){
+  minGapMs = minGapMs !== undefined ? minGapMs : 130;
+  const wait = _lastCallAt + minGapMs - Date.now();
+  if(wait > 0) await new Promise(r=>setTimeout(r, wait));
+  _lastCallAt = Date.now();
+}
+
+function isRateLimitError(e){
+  return e && String(e.message||e).toLowerCase().includes('rate limit');
+}
+
+// Retries a storage call with backoff — smooths over transient errors
+// (including rate limits) instead of failing the user's action outright.
+// Rate-limit errors get a longer backoff since they need real time to clear.
+async function withRetry(fn, retries, baseDelay){
+  retries = retries || 3; baseDelay = baseDelay || 400;
+  let lastErr;
+  for(let i=0; i<retries; i++){
+    await pace();
+    try{ return await fn(); }
+    catch(e){
+      lastErr = e;
+      if(i < retries-1){
+        const delay = isRateLimitError(e) ? baseDelay*(i+2)*2 : baseDelay*(i+1);
+        await new Promise(r=>setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// Keys never contain the participant's name/USN (that data lives only in the
+// stored value) — keeps keys short, ASCII-safe, and immune to special
+// characters in a name causing a malformed request.
+function keyPrefix(house, r){ return `sort:r${r!==undefined?r:round}:${house}:`; }
+function makeKey(house, r){
+  const ts = Date.now().toString(36);
+  const rnd = Math.random().toString(36).slice(2,8);
+  return `${keyPrefix(house, r)}${ts}-${rnd}`;
+}
+
+async function loadRound(){
+  try{
+    const r = await withRetry(()=>window.storage.get('current-round', true));
+    if(r && r.value) round = parseInt(r.value, 10) || 1;
+  }catch(e){ round = 1; }
+  document.getElementById('roundNum').textContent = round;
+}
+
+async function fetchHouseKeys(house, r){
+  try{
+    const res = await withRetry(()=>window.storage.list(keyPrefix(house, r), true));
+    return (res && res.keys) ? res.keys : [];
+  }catch(e){ return []; }
+}
+
+async function refreshCounts(){
+  const results = await Promise.all(ORDER.map(h => fetchHouseKeys(h)));
+  ORDER.forEach((h,i)=>{ counts[h] = results[i].length; });
+  sortsSinceSync = 0;
+  return counts;
+}
+
+// Fetch stored values for a list of keys, in small, gently-paced batches so
+// we never trigger a storage rate limit even with a large roster.
+async function batchGetValues(keys, batchSize, pauseMs){
+  batchSize = batchSize || 10;
+  pauseMs = pauseMs !== undefined ? pauseMs : 150;
+  const out = [];
+  for(let i=0; i<keys.length; i+=batchSize){
+    const slice = keys.slice(i, i+batchSize);
+    const results = await Promise.all(slice.map(async k=>{
+      try{
+        const res = await withRetry(()=>window.storage.get(k, true), 2, 300);
+        return res && res.value ? JSON.parse(res.value) : null;
+      }catch(e){ return null; }
+    }));
+    results.forEach(r=>{ if(r) out.push(r); });
+    if(i+batchSize < keys.length && pauseMs) await new Promise(r=>setTimeout(r, pauseMs));
+  }
+  return out;
+}
+
+// Delete a batch of keys (used to actually clear a round's data, not just
+// hide it). Best-effort — failures on individual keys are ignored.
+async function batchDeleteKeys(keys, batchSize, pauseMs){
+  batchSize = batchSize || 10;
+  pauseMs = pauseMs !== undefined ? pauseMs : 150;
+  for(let i=0; i<keys.length; i+=batchSize){
+    const slice = keys.slice(i, i+batchSize);
+    await Promise.all(slice.map(async k=>{
+      try{ await withRetry(()=>window.storage.delete(k, true), 2, 300); }catch(e){ /* ignore */ }
+    }));
+    if(i+batchSize < keys.length && pauseMs) await new Promise(r=>setTimeout(r, pauseMs));
+  }
+}
+
+function pickHouse(c){
+  const max = Math.max(...ORDER.map(h=>c[h]||0));
+  const weights = ORDER.map(h => (max - (c[h]||0)) + 1);
+  const total = weights.reduce((a,b)=>a+b,0);
+  let r = Math.random()*total;
+  for(let i=0;i<ORDER.length;i++){ r -= weights[i]; if(r<=0) return ORDER[i]; }
+  return ORDER[ORDER.length-1];
+}
+
+/* ================= STARFIELD ================= */
+const starsEl = document.getElementById('stars');
+for(let i=0;i<45;i++){
+  const s = document.createElement('span');
+  s.style.left = Math.random()*100+'%'; s.style.top = Math.random()*100+'%';
+  s.style.animationDelay = (Math.random()*3.5)+'s';
+  starsEl.appendChild(s);
+}
+
+/* ================= MAIN FLOW ================= */
+const hatWrap = document.getElementById('hatWrap');
+const ticker = document.getElementById('ticker');
+const flavor = document.getElementById('flavor');
+const entry = document.getElementById('entry');
+const sortBtn = document.getElementById('sortBtn');
+const reveal = document.getElementById('reveal');
+const nameInput = document.getElementById('nameInput');
+const usnInput = document.getElementById('usnInput');
+const mainHead = document.getElementById('mainHead');
+const totalNote = document.getElementById('totalNote');
+
+function checkFormValid(){
+  sortBtn.disabled = !(nameInput.value.trim() && usnInput.value.trim());
+}
+nameInput.addEventListener('input', checkFormValid);
+usnInput.addEventListener('input', checkFormValid);
+
+async function refreshTotalNote(force){
+  if(force || sortsSinceSync >= SYNC_EVERY) await refreshCounts();
+  const total = ORDER.reduce((a,h)=>a+counts[h],0);
+  totalNote.textContent = total > 0 ? `${total} wizards have joined the journey so far` : `Be among the first to be sorted`;
+}
+
+function applyHouseTheme(h){
+  const house = HOUSES[h];
+  document.documentElement.style.setProperty('--house-1', house.c1);
+  document.documentElement.style.setProperty('--house-2', house.c2);
+  document.documentElement.style.setProperty('--house-a', house.a);
+}
+
+function launchConfetti(house){
+  const box = document.getElementById('confetti');
+  box.innerHTML = '';
+  const colors = [house.a, house.c2, '#ffffff'];
+  for(let i=0;i<70;i++){
+    const el = document.createElement('i');
+    el.style.left = Math.random()*100+'%';
+    el.style.background = colors[Math.floor(Math.random()*colors.length)];
+    el.style.animationDuration = (2.2+Math.random()*1.6)+'s';
+    el.style.animationDelay = (Math.random()*0.4)+'s';
+    box.appendChild(el);
+  }
+  setTimeout(()=>{ box.innerHTML=''; }, 4200);
+}
+
+sortBtn.addEventListener('click', async ()=>{
+  sortBtn.disabled = true;
+  nameInput.blur(); usnInput.blur();
+  mainHead.style.opacity='.4';
+  hatWrap.classList.add('thinking');
+  ticker.classList.add('show'); flavor.classList.add('show');
+
+  // Full resync only every few sorts on this device — most sorts reuse the
+  // in-memory counts (updated locally after each save) so a busy entrance
+  // table doesn't hammer storage with 4 list calls per single participant.
+  if(sortsSinceSync >= SYNC_EVERY) await refreshCounts();
+  const chosen = pickHouse(counts);
+
+  let step = 0;
+  const totalSteps = 16;
+  const sequence = [];
+  for(let i=0;i<totalSteps;i++) sequence.push(ORDER[Math.floor(Math.random()*ORDER.length)]);
+  sequence.push(chosen);
+
+  function tick(){
+    const h = sequence[step];
+    ticker.textContent = HOUSES[h].name;
+    ticker.style.color = HOUSES[h].a;
+    flavor.textContent = HOUSES[h].flavor;
+    step++;
+    if(step < sequence.length){
+      const delay = 70 + Math.pow(step/totalSteps, 2.2)*280;
+      setTimeout(tick, delay);
+    } else {
+      finishSort(chosen);
+    }
+  }
+  tick();
+});
+
+async function finishSort(h){
+  hatWrap.classList.remove('thinking');
+  ticker.classList.remove('show'); flavor.classList.remove('show');
+  const house = HOUSES[h];
+  applyHouseTheme(h);
+  document.body.classList.add('revealed');
+
+  const name = nameInput.value.trim();
+  const usn = usnInput.value.trim();
+
+  document.getElementById('crestSvg').innerHTML = house.crest;
+  document.getElementById('houseName').textContent = house.name;
+  document.getElementById('houseTag').textContent = house.tag;
+  document.getElementById('greet').innerHTML = `<b>${escapeHtml(name)}</b>, the Hat has decided — welcome to <b>${house.name}</b>. Your journey begins now.`;
+
+  entry.style.display='none';
+  mainHead.style.display='none';
+  reveal.classList.add('show');
+  launchConfetti(house);
+
+  // The result is decided — reflect it immediately regardless of network
+  // timing, and queue the save so it never blocks or gets lost.
+  counts[h] = (counts[h]||0) + 1;
+  sortsSinceSync++;
+  renderHousemates(h);
+
+  let saved = false;
+  try{
+    const key = makeKey(h);
+    const res = await withRetry(()=>window.storage.set(key, JSON.stringify({name, usn, t:Date.now()}), true), 2, 500);
+    if(res) saved = true;
+  }catch(e){ console.error('save error', e); }
+
+  if(!saved){
+    pendingQueue.push({house:h, name, usn, t:Date.now(), round});
+    updatePendingBadge();
+    flushPending();
+  }
+}
+
+function renderHousemates(h){
+  document.getElementById('rosterTitle').textContent = 'Your house so far';
+  const list = document.getElementById('rosterList');
+  list.innerHTML = `<span>${HOUSES[h].name} now has <b>${counts[h]}</b> member${counts[h]===1?'':'s'}.</span>`;
+}
+
+document.getElementById('againBtn').addEventListener('click', ()=>{
+  document.body.classList.remove('revealed');
+  reveal.classList.remove('show');
+  entry.style.display='block';
+  mainHead.style.display='block';
+  mainHead.style.opacity='1';
+  nameInput.value=''; usnInput.value='';
+  sortBtn.disabled = true;
+  refreshTotalNote();
+});
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ================= VIEW SWITCHING ================= */
+function showView(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+document.getElementById('adminLink').addEventListener('click', (e)=>{
+  e.preventDefault(); showView('view-pin');
+  document.getElementById('pinInput').value='';
+  document.getElementById('pinError').style.display='none';
+});
+document.getElementById('backFromPin').addEventListener('click', (e)=>{ e.preventDefault(); showView('view-main'); });
+document.getElementById('backFromAdmin').addEventListener('click', (e)=>{ e.preventDefault(); showView('view-main'); refreshTotalNote(); });
+
+document.getElementById('pinBtn').addEventListener('click', checkPin);
+document.getElementById('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') checkPin(); });
+function checkPin(){
+  const val = document.getElementById('pinInput').value.trim();
+  if(val === ADMIN_PIN){ showView('view-admin'); loadAdmin(); }
+  else{ document.getElementById('pinError').style.display='block'; }
+}
+
+/* ================= ADMIN ================= */
+let adminData = {};
+
+async function loadAdmin(){
+  await loadRound();
+  updatePendingBadge();
+  const keyLists = await Promise.all(ORDER.map(h => fetchHouseKeys(h)));
+  ORDER.forEach((h,i)=>{ counts[h] = keyLists[i].length; });
+  renderTiles();
+  document.getElementById('tables').innerHTML = '<p style="opacity:.6; font-size:.85rem;">Loading roster…</p>';
+  const rosterLists = await Promise.all(keyLists.map(keys => batchGetValues(keys)));
+  ORDER.forEach((h,i)=>{ adminData[h] = rosterLists[i]; });
+  renderTables();
+}
+
+function renderTiles(){
+  const tiles = document.getElementById('tiles');
+  const total = ORDER.reduce((a,h)=>a+counts[h],0);
+  document.getElementById('totalCount').textContent = total;
+  document.getElementById('roundNum').textContent = round;
+  tiles.innerHTML = ORDER.map(h=>{
+    const house = HOUSES[h];
+    return `<div class="tile" style="background:linear-gradient(160deg, ${house.c1}, ${house.c2}); color:${h==='hufflepuff'?'#2a2015':'#f2ead2'};">
+      <div class="n">${counts[h]}</div><div class="l">${house.name}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderTables(filter){
+  const q = (filter||'').trim().toLowerCase();
+  const tables = document.getElementById('tables');
+  tables.innerHTML = ORDER.map(h=>{
+    const house = HOUSES[h];
+    let rows = adminData[h] || [];
+    if(q) rows = rows.filter(r => r.name.toLowerCase().includes(q) || r.usn.toLowerCase().includes(q));
+    const body = rows.length
+      ? rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.name)}</td><td class="usn">${escapeHtml(r.usn)}</td></tr>`).join('')
+      : `<tr><td colspan="3" style="opacity:.5;">No entries</td></tr>`;
+    return `<div class="htable">
+      <h3 style="background:${house.c2}; color:${h==='hufflepuff'?'#2a2015':'#f2ead2'};">${house.name} — ${counts[h]}</h3>
+      <table>
+        <thead><tr><th style="width:30px;">#</th><th>Name</th><th>USN</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('searchInput').addEventListener('input', (e)=> renderTables(e.target.value));
+document.getElementById('refreshBtn').addEventListener('click', loadAdmin);
+
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  let csv = 'House,Name,USN\n';
+  ORDER.forEach(h=>{
+    (adminData[h]||[]).forEach(r=>{
+      csv += `${HOUSES[h].name},"${r.name.replace(/"/g,'""')}","${r.usn.replace(/"/g,'""')}"\n`;
+    });
+  });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `open-source-day-round${round}-roster.csv`;
+  a.click();
+});
+
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  document.getElementById('resetModal').classList.add('show');
+});
+document.getElementById('cancelReset').addEventListener('click', ()=>{
+  document.getElementById('resetModal').classList.remove('show');
+});
+document.getElementById('confirmReset').addEventListener('click', async ()=>{
+  const oldRound = round;
+  round += 1;
+  try{ await window.storage.set('current-round', String(round), true); }catch(e){ console.error(e); }
+  document.getElementById('resetModal').classList.remove('show');
+
+  // instantly reset what admin sees — new round has no entries yet
+  ORDER.forEach(h=>{ counts[h]=0; adminData[h]=[]; });
+  renderTiles(); renderTables();
+  document.getElementById('tables').insertAdjacentHTML('afterbegin',
+    '<p id="cleanupNote" style="opacity:.6; font-size:.8rem; grid-column:1/-1;">Clearing previous round\'s data in the background…</p>');
+
+  // actually delete the old round's entries so they don't linger in storage
+  const oldKeyLists = await Promise.all(ORDER.map(h => fetchHouseKeys(h, oldRound)));
+  await Promise.all(oldKeyLists.map(keys => batchDeleteKeys(keys)));
+  const note = document.getElementById('cleanupNote');
+  if(note) note.remove();
+});
+
+/* ---- QR generator ---- */
+document.getElementById('genQrBtn').addEventListener('click', ()=>{
+  const url = document.getElementById('siteUrlInput').value.trim();
+  const box = document.getElementById('qrcode');
+  box.innerHTML = '';
+  if(!url) return;
+  try{
+    new QRCode(box, { text:url, width:180, height:180, colorDark:"#10152b", colorLight:"#ffffff" });
+  }catch(e){ box.innerHTML = '<p style="color:#b00; font-size:.8rem; padding:10px;">Could not generate QR — check the link.</p>'; }
+});
+
+/* ================= INIT ================= */
+(async function init(){
+  await loadRound();
+  await refreshTotalNote();
+})();
+</script>
+
+</body>
+</html>
